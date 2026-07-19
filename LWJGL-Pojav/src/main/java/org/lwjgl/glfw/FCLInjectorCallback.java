@@ -29,7 +29,7 @@ public abstract class FCLInjectorCallback extends Callback implements FCLInjecto
     }
 
     protected FCLInjectorCallback() {
-        super(CIF);
+        super(DESCRIPTOR);
     }
 
     FCLInjectorCallback(long functionPointer) {

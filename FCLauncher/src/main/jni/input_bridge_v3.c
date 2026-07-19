@@ -51,6 +51,7 @@ jint JNI_OnLoad(JavaVM* vm, __attribute__((unused)) void* reserved) {
         pojav_environ->bridgeClazz = (*pojav_environ->dalvikJNIEnvPtr_ANDROID)->NewGlobalRef(pojav_environ->dalvikJNIEnvPtr_ANDROID,(*pojav_environ->dalvikJNIEnvPtr_ANDROID) ->FindClass(pojav_environ->dalvikJNIEnvPtr_ANDROID,"org/lwjgl/glfw/CallbackBridge"));
         pojav_environ->method_accessAndroidClipboard = (*pojav_environ->dalvikJNIEnvPtr_ANDROID)->GetStaticMethodID(pojav_environ->dalvikJNIEnvPtr_ANDROID, pojav_environ->bridgeClazz, "accessAndroidClipboard", "(ILjava/lang/String;)Ljava/lang/String;");
         pojav_environ->method_onGrabStateChanged = (*pojav_environ->dalvikJNIEnvPtr_ANDROID)->GetStaticMethodID(pojav_environ->dalvikJNIEnvPtr_ANDROID, pojav_environ->bridgeClazz, "onGrabStateChanged", "(Z)V");
+        pojav_environ->method_notifyLauncher = (*pojav_environ->dalvikJNIEnvPtr_ANDROID)->GetStaticMethodID(pojav_environ->dalvikJNIEnvPtr_ANDROID, pojav_environ->bridgeClazz, "notifyLauncher", "(I[I)Z");
         pojav_environ->isUseStackQueueCall = JNI_FALSE;
     } else if (pojav_environ->dalvikJavaVMPtr != vm) {
         __android_log_print(ANDROID_LOG_INFO, "Native", "Saving JVM environ...");
@@ -330,6 +331,43 @@ jstring convertStringJVM(JNIEnv* srcEnv, JNIEnv* dstEnv, jstring srcStr) {
     jstring dstStr = (*dstEnv)->NewStringUTF(dstEnv, srcStrC);
     (*srcEnv)->ReleaseStringUTFChars(srcEnv, srcStr, srcStrC);
     return dstStr;
+}
+
+// Copies an int[] from one JVM into a freshly-allocated int[] in another JVM.
+// Used to forward CallbackBridge.nativeNotifyLauncher's action array from the
+// runtime JVM to the Dalvik VM.
+jintArray convertIntArrayJVM(JNIEnv* srcEnv, JNIEnv* dstEnv, jintArray srcIntArray) {
+    if (srcIntArray == NULL) {
+        return NULL;
+    }
+
+    jsize len = (*srcEnv)->GetArrayLength(srcEnv, srcIntArray);
+    jint* srcPtr = (*srcEnv)->GetIntArrayElements(srcEnv, srcIntArray, NULL);
+
+    jintArray dstIntArray = (*dstEnv)->NewIntArray(dstEnv, len);
+    (*dstEnv)->SetIntArrayRegion(dstEnv, dstIntArray, 0, len, srcPtr);
+
+    (*srcEnv)->ReleaseIntArrayElements(srcEnv, srcIntArray, srcPtr, JNI_ABORT);
+    return dstIntArray;
+}
+
+// Called from the runtime JVM (e.g. by org.lwjgl.sdl.SDLInit on SDL_Init) to notify
+// the Android/Dalvik launcher side. Hops to the Dalvik CallbackBridge.notifyLauncher,
+// which loads libSDL3.so and enables SDL support.
+JNIEXPORT jboolean JNICALL Java_org_lwjgl_glfw_CallbackBridge_nativeNotifyLauncher(JNIEnv* env, __attribute__((unused)) jclass clazz, jint type, jintArray action) {
+    JNIEnv *dalvikEnv;
+    (*pojav_environ->dalvikJavaVMPtr)->AttachCurrentThread(pojav_environ->dalvikJavaVMPtr, &dalvikEnv, NULL);
+    assert(dalvikEnv != NULL);
+    assert(pojav_environ->bridgeClazz != NULL);
+
+    jintArray dalvikAction = convertIntArrayJVM(env, dalvikEnv, action);
+    jboolean result = (*dalvikEnv)->CallStaticBooleanMethod(dalvikEnv, pojav_environ->bridgeClazz,
+                                                            pojav_environ->method_notifyLauncher, type, dalvikAction);
+    if (dalvikAction != NULL) {
+        (*dalvikEnv)->DeleteLocalRef(dalvikEnv, dalvikAction);
+    }
+    (*pojav_environ->dalvikJavaVMPtr)->DetachCurrentThread(pojav_environ->dalvikJavaVMPtr);
+    return result;
 }
 
 JNIEXPORT jstring JNICALL Java_org_lwjgl_glfw_CallbackBridge_nativeClipboard(JNIEnv* env, __attribute__((unused)) jclass clazz, jint action, jbyteArray copySrc) {

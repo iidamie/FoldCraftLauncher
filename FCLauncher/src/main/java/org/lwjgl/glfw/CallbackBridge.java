@@ -5,8 +5,10 @@ import android.content.ClipData;
 import android.content.ClipDescription;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.util.Log;
 import android.view.Choreographer;
 
+import androidx.annotation.Keep;
 import androidx.annotation.Nullable;
 
 import com.tungsten.fcl.FCLApplication;
@@ -27,6 +29,11 @@ public class CallbackBridge {
     public static final int CLIPBOARD_COPY = 2000;
     public static final int CLIPBOARD_PASTE = 2001;
     public static final int CLIPBOARD_OPEN = 2002;
+
+    // Notification types (must match org.lwjgl.glfw.CallbackBridge on the JRE side)
+    private static final int SDL = 0;
+    // Notification actions
+    private static final int INIT = 0;
 
     public static volatile int windowWidth, windowHeight;
     public static volatile int physicalWidth, physicalHeight;
@@ -203,6 +210,35 @@ public class CallbackBridge {
             }
         }, 16);
 
+    }
+
+    /**
+     * Notify the Android launcher side of a runtime event coming from the JRE.
+     * Called from the JRE side via {@code nativeNotifyLauncher} (see the LWJGL-side
+     * CallbackBridge). Currently used to enable SDL: LWJGL's SDLInit calls this on
+     * SDL_Init so we can make sure libSDL3.so is loaded before native SDL symbols are
+     * resolved (some mods rely on the launcher loading it).
+     *
+     * @return whether the notification was handled
+     */
+    @SuppressWarnings("unused")
+    @Keep
+    public static boolean notifyLauncher(int type, int... action) {
+        switch (type) {
+            case SDL:
+                if (action.length > 0 && action[0] == INIT) {
+                    try {
+                        System.loadLibrary("SDL3");
+                        Log.i("CallbackBridge", "SDL support enabled (libSDL3.so loaded)");
+                        return true;
+                    } catch (Throwable t) {
+                        Log.e("CallbackBridge", "Failed to load libSDL3.so for SDL support", t);
+                        return false;
+                    }
+                }
+                break;
+        }
+        return false;
     }
 
     @CriticalNative

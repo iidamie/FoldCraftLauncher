@@ -6,22 +6,27 @@ import static org.lwjgl.system.libffi.LibFFI.ffi_type_pointer;
 import static org.lwjgl.system.libffi.LibFFI.ffi_type_uint32;
 import static org.lwjgl.system.libffi.LibFFI.ffi_type_void;
 
+import java.lang.invoke.MethodHandles;
+
+import org.lwjgl.system.Callback;
 import org.lwjgl.system.CallbackI;
 import org.lwjgl.system.NativeType;
-import org.lwjgl.system.libffi.FFICIF;
 
 @FunctionalInterface
     @NativeType("FCLinjectorfun")
     public interface FCLInjectorCallbackI extends CallbackI {
 
-        FFICIF CIF = apiCreateCIF(
-                FFI_DEFAULT_ABI,
-                ffi_type_void,
-                ffi_type_pointer, ffi_type_uint32
+        Callback.Descriptor DESCRIPTOR = new Callback.Descriptor(
+                MethodHandles.lookup(),
+                apiCreateCIF(
+                        FFI_DEFAULT_ABI,
+                        ffi_type_void,
+                        ffi_type_pointer, ffi_type_uint32
+                )
         );
 
         @Override
-        default FFICIF getCallInterface() { return CIF; }
+        default Callback.Descriptor getDescriptor() { return DESCRIPTOR; }
 
         @Override
         default void callback(long ret, long args) {

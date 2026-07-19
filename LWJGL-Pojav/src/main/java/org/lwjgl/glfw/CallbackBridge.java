@@ -16,9 +16,14 @@ public class CallbackBridge {
     public static final int EVENT_TYPE_WINDOW_SIZE = 1008;
     
     public static final int ANDROID_TYPE_GRAB_STATE = 0;
-    
+
     public static final boolean INPUT_DEBUG_ENABLED;
-    
+
+    // Notification types
+    public static final int SDL = 0;
+    // Notification actions
+    public static final int INIT = 0;
+
     // TODO send grab state event to Android
     
     static {
@@ -47,5 +52,8 @@ public class CallbackBridge {
     public static native boolean nativeSetInputReady(boolean ready);
     public static native String nativeClipboard(int action, byte[] copy);
     public static native void nativeSetGrabbing(boolean grab);
+    // Notify the Android launcher side of runtime events (e.g. SDL initialization).
+    // Implemented in libpojavexec; hops from the runtime JVM to the Dalvik CallbackBridge.
+    public static native boolean nativeNotifyLauncher(int type, int... action);
 }
 
