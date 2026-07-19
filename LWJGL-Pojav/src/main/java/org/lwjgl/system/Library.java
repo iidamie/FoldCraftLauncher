@@ -2,14 +2,13 @@
  * Copyright LWJGL. All rights reserved.
  * License terms: https://www.lwjgl.org/license
  *
- * FCL patch: this is the stock LWJGL 3.4.1 org.lwjgl.system.Library, with the
- * Amethyst-specific static-initializer injection removed. The upstream (Amethyst)
- * build injected `System.loadLibrary("pojavexec")` / a macOS `/AngelAuraAmethyst`
- * load into Library.<clinit>, which loaded libpojavexec too early (during LWJGL's
- * very first class init, before FCL's GLFW bootstrap) and crashed libpojavexec's
- * JNI_OnLoad with a null-pointer SIGSEGV. FCL loads libpojavexec from its own
- * GLFW.java / CallbackBridge, so the injection is removed here to restore the
- * original load ordering. This source shadows the Library.class shipped in the
+ * FCL patch: this is the stock LWJGL 3.4.1 org.lwjgl.system.Library. Its static
+ * initializer keeps the early `System.loadLibrary("pojavexec")` (Linux) that Minecraft
+ * 26.3+ needs — LWJGL core native symbols (libffi/Upcalls) are resolved before the GLFW
+ * class loads. Unlike upstream Amethyst, the GLFW-side JNI bridge setup is NOT done inside
+ * libpojavexec's JNI_OnLoad (which would crash here, before the GLFW class exists); it is
+ * deferred to GLFW.nativeInitializeGLFWNativeBridge(). The macOS AngelAuraAmethyst branch is
+ * dropped (FCL targets Android/Linux). This source shadows the Library.class shipped in the
  * merged LWJGL module jars.
  */
 package org.lwjgl.system;
@@ -480,9 +479,21 @@ public final class Library {
         if (Checks.DEBUG) {
             APIUtil.DEBUG_STREAM.print("[LWJGL] Version: " + Version.getVersion() + "\n\t OS: " + System.getProperty("os.name") + " v" + System.getProperty("os.version") + "\n\tJRE: " + Platform.get().getName() + " " + System.getProperty("os.arch") + " " + System.getProperty("java.version") + "\n\tJVM: " + System.getProperty("java.vm.name") + " v" + System.getProperty("java.vm.version") + " by " + System.getProperty("java.vm.vendor") + "\n");
         }
-        // FCL: removed Amethyst's early System.loadLibrary("pojavexec") injection here.
-        // libpojavexec is loaded by FCL's own GLFW.java / CallbackBridge instead; loading it
-        // during Library.<clinit> reordered native init and crashed libpojavexec's JNI_OnLoad.
+        // FCL: load libpojavexec as early as LWJGL's Library class initializes.
+        // Minecraft 26.3+ resolves LWJGL core native symbols (libffi via org.lwjgl.system.Upcalls,
+        // e.g. from RenderSystem.initBackendSystem) BEFORE the GLFW class is initialized, so
+        // libpojavexec (which provides those symbols) must already be loaded here. The paired
+        // GLFW-side JNI bridge setup is deferred to GLFW.nativeInitializeGLFWNativeBridge(),
+        // which the GLFW class calls once it is ready, so libpojavexec's JNI_OnLoad must NOT
+        // touch the GLFW class. (Upstream Amethyst injects the same early load; the macOS
+        // AngelAuraAmethyst branch is dropped as FCL targets Android/Linux.)
+        try {
+            if (Platform.get() == Platform.LINUX) {
+                System.loadLibrary("pojavexec");
+            }
+        } catch (UnsatisfiedLinkError e) {
+            e.printStackTrace();
+        }
         Library.loadSystem("org.lwjgl", JNI_LIBRARY_NAME);
     }
 }

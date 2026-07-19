@@ -540,6 +540,10 @@ public class GLFW
 
         try {
             System.loadLibrary("pojavexec");
+            // GLFW class is initializing now, so libpojavexec can safely resolve it and wire up
+            // the native callback bridge (moved out of JNI_OnLoad, which now runs before the
+            // GLFW class exists because libpojavexec is loaded early from Library.<clinit>).
+            nativeInitializeGLFWNativeBridge();
         } catch (UnsatisfiedLinkError e) {
             e.printStackTrace();
         }
@@ -586,6 +590,10 @@ public class GLFW
 		 };
 		 */
     }
+
+    // Deferred native bridge init, implemented in libpojavexec. Called from this class's static
+    // initializer so the native side can resolve the GLFW class only after it is loaded.
+    private static native void nativeInitializeGLFWNativeBridge();
 
     private static native long nglfwSetCharCallback(long window, long ptr);
     private static native long nglfwSetCharModsCallback(long window, long ptr);
