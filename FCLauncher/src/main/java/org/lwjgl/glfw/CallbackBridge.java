@@ -242,6 +242,63 @@ public class CallbackBridge {
 
     public static native int getFps();
 
+    // ---- SDL support (Minecraft 26.3+ uses SDL3 for windowing/input) ----
+
+    // Notification types (must match the JRE-side org.lwjgl.glfw.CallbackBridge in LWJGL/3.4.1)
+    public static final int SDL = 0;
+    // Notification actions
+    public static final int INIT = 0;
+
+    /** True once SDL has been initialized and wired up. The ported org.libsdl.app.SDLActivity
+     * gates its native callbacks on this flag; it stays false for GLFW-based (older) versions. */
+    public static volatile boolean sdlEnabled = false;
+
+    /** The Android Surface the game renders onto, published by JVMActivity so SDL can bind to it. */
+    private static android.view.Surface sdlNativeSurface = null;
+    private static android.app.Activity sdlActivity = null;
+
+    /** Called by JVMActivity to hand the rendering surface + activity context to the SDL layer. */
+    public static void setSdlSurface(android.app.Activity activity, android.view.Surface surface) {
+        sdlActivity = activity;
+        sdlNativeSurface = surface;
+    }
+
+    /**
+     * Called from the JRE side (via nativeNotifyLauncher, triggered by the SDL_InitSubSystem
+     * bytehook) when the game initializes SDL. Loads libSDL3.so, sets up SDL's JNI, and binds
+     * the launcher's Android surface to SDL. Returns whether SDL support was enabled.
+     */
+    @SuppressWarnings("unused")
+    @androidx.annotation.Keep
+    public static boolean notifyLauncher(int type, int... action) {
+        if (type != SDL || action.length == 0 || action[0] != INIT) {
+            return false;
+        }
+        if (sdlEnabled) {
+            return true;
+        }
+        try {
+            System.loadLibrary("SDL3");
+            try { System.loadLibrary("SDL2"); } catch (Throwable ignored) {}
+            org.libsdl.app.SDL.initialize();
+            if (sdlActivity != null) {
+                org.libsdl.app.SDL.setContext(sdlActivity);
+            }
+            org.libsdl.app.SDL.setupJNI();
+            org.libsdl.app.SDLSurface sdlSurface = new org.libsdl.app.SDLSurface(sdlActivity);
+            org.libsdl.app.SDLActivity.externalInitialize(sdlSurface, null, sdlNativeSurface);
+            sdlEnabled = true;
+            if (org.libsdl.app.SDLActivity.getSDLSurface() != null) {
+                org.libsdl.app.SDLActivity.getSDLSurface().surfaceChanged();
+            }
+            android.util.Log.i("CallbackBridge", "SDL support enabled");
+            return true;
+        } catch (Throwable t) {
+            android.util.Log.e("CallbackBridge", "Failed to enable SDL support", t);
+            return false;
+        }
+    }
+
     static {
         System.loadLibrary("pojavexec");
     }

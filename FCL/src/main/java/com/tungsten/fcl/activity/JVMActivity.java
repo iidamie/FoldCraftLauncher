@@ -109,8 +109,10 @@ public class JVMActivity extends FCLActivity implements TextureView.SurfaceTextu
     @Override
     public void onSurfaceTextureAvailable(@NonNull SurfaceTexture surfaceTexture, int i, int i1) {
         if (isRunning) {
+            Surface surface = new Surface(surfaceTexture);
             fclBridge.setSurfaceTexture(surfaceTexture);
-            CallbackBridge.setupBridgeWindow(new Surface(surfaceTexture));
+            CallbackBridge.setSdlSurface(this, surface);
+            CallbackBridge.setupBridgeWindow(surface);
             menu.onGraphicOutput();
             return;
         }
@@ -132,7 +134,11 @@ public class JVMActivity extends FCLActivity implements TextureView.SurfaceTextu
             gameOption.save();
         }
         surfaceTexture.setDefaultBufferSize(width, height);
-        fclBridge.execute(new Surface(surfaceTexture), menu.getCallbackBridge());
+        Surface surface = new Surface(surfaceTexture);
+        // Publish the surface + activity to the SDL layer so SDL (MC 26.3+) can bind to it once
+        // the game calls SDL_Init. Harmless for GLFW-based versions (SDL is only enabled on demand).
+        CallbackBridge.setSdlSurface(this, surface);
+        fclBridge.execute(surface, menu.getCallbackBridge());
         fclBridge.setSurfaceTexture(surfaceTexture);
         fclBridge.pushEventWindow(width, height);
     }

@@ -13,6 +13,9 @@
 #include <fcl_internal.h>
 #include <sys/mman.h>
 #include <pthread.h>
+#include <stdint.h>
+#include "environ/environ.h"
+#include "utils.h"
 
 typedef void (*android_update_LD_LIBRARY_PATH_t)(const char*);
 static volatile jobject exitTrap_bridge;
@@ -252,6 +255,33 @@ static void custom_atexit() {
     nominal_exit(0);
 }
 
+// --- SDL support: intercept SDL_InitSubSystem so we can notify the Android/launcher side ---
+// Minecraft 26.3+ uses SDL3 for windowing/input. When the game (runtime JVM) calls
+// SDL_InitSubSystem inside libSDL3.so, this bytehook fires and forwards a notification to the
+// Dalvik CallbackBridge.notifyLauncher, which loads libSDL3.so's JNI and wires up the surface.
+typedef bool (*SDL_InitSubSystem_Func)(uint32_t);
+
+static bool custom_SDL_InitSubSystem_Func(uint32_t flags) {
+    JNIEnv *dvm_env = get_attached_env(pojav_environ->dalvikJavaVMPtr);
+    if (dvm_env != NULL && pojav_environ->bridgeClazz != NULL && pojav_environ->method_notifyLauncher != NULL) {
+        jint safeFlags = (flags > INT32_MAX) ? -1 : (jint) flags;
+        jint type = 0;                       // CallbackBridge.SDL
+        jint action[] = {0, safeFlags};      // {CallbackBridge.INIT, flags}
+        jintArray actionArray = (*dvm_env)->NewIntArray(dvm_env, 2);
+        (*dvm_env)->SetIntArrayRegion(dvm_env, actionArray, 0, 2, action);
+        (*dvm_env)->CallStaticBooleanMethod(dvm_env, pojav_environ->bridgeClazz,
+                                            pojav_environ->method_notifyLauncher, type, actionArray);
+        (*dvm_env)->DeleteLocalRef(dvm_env, actionArray);
+    } else {
+        __android_log_print(ANDROID_LOG_ERROR, "FCL", "SDL_InitSubSystem notify to launcher-side integration failed!");
+    }
+
+    // Call the original SDL_InitSubSystem after doing the launcher-side setup.
+    bool r = BYTEHOOK_CALL_PREV(custom_SDL_InitSubSystem_Func, SDL_InitSubSystem_Func, flags);
+    BYTEHOOK_POP_STACK();
+    return r;
+}
+
 JNIEXPORT void JNICALL Java_com_tungsten_fclauncher_bridge_FCLBridge_setupExitTrap(JNIEnv *env, jobject jobject1, jobject bridge) {
     exitTrap_bridge = (*env)->NewGlobalRef(env, bridge);
     (*env)->GetJavaVM(env, &exitTrap_jvm);
@@ -262,6 +292,13 @@ JNIEXPORT void JNICALL Java_com_tungsten_fclauncher_bridge_FCLBridge_setupExitTr
         bytehook_hook_all(NULL,
                           "exit",
                           &custom_exit,
+                          NULL,
+                          NULL);
+        // Hook SDL_InitSubSystem in any (current or future) loaded library, so SDL-based
+        // Minecraft (26.3+) notifies the launcher to enable SDL support.
+        bytehook_hook_all(NULL,
+                          "SDL_InitSubSystem",
+                          &custom_SDL_InitSubSystem_Func,
                           NULL,
                           NULL);
     }else {

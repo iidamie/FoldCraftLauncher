@@ -52,11 +52,29 @@ jstring convertStringJVM(JNIEnv* srcEnv, JNIEnv* dstEnv, jstring srcStr) {
     if (srcStr == NULL) {
         return NULL;
     }
-    
+
     const char* srcStrC = (*srcEnv)->GetStringUTFChars(srcEnv, srcStr, 0);
     jstring dstStr = (*dstEnv)->NewStringUTF(dstEnv, srcStrC);
 	(*srcEnv)->ReleaseStringUTFChars(srcEnv, srcStr, srcStrC);
     return dstStr;
+}
+
+// Copies an int[] from one JVM into a freshly-allocated int[] in another JVM.
+// Used to forward CallbackBridge.nativeNotifyLauncher's action array from the
+// runtime JVM to the Dalvik VM.
+jintArray convertIntArrayJVM(JNIEnv* srcEnv, JNIEnv* dstEnv, jintArray srcIntArray) {
+    if (srcIntArray == NULL) {
+        return NULL;
+    }
+
+    jsize len = (*srcEnv)->GetArrayLength(srcEnv, srcIntArray);
+    jint* srcPtr = (*srcEnv)->GetIntArrayElements(srcEnv, srcIntArray, NULL);
+
+    jintArray dstIntArray = (*dstEnv)->NewIntArray(dstEnv, len);
+    (*dstEnv)->SetIntArrayRegion(dstEnv, dstIntArray, 0, len, srcPtr);
+
+    (*srcEnv)->ReleaseIntArrayElements(srcEnv, srcIntArray, srcPtr, JNI_ABORT);
+    return dstIntArray;
 }
 
 JNIEXPORT void JNICALL Java_net_kdt_pojavlaunch_utils_JREUtils_setupBridgeSurfaceAWT(JNIEnv *env, jclass clazz, jlong surface) {
