@@ -17,7 +17,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdatomic.h>
+#include <stdint.h>
 #include <math.h>
+#include <bytehook.h>
 
 #define TAG __FILE_NAME__
 #include "log.h"
@@ -42,6 +44,7 @@ do {                                                                       \
 } while(0)
 
 static void registerFunctions(JNIEnv *env);
+static void install_sdl_hook();
 
 jint JNI_OnLoad(JavaVM* vm, __attribute__((unused)) void* reserved) {
     if (pojav_environ->dalvikJavaVMPtr == NULL) {
@@ -73,6 +76,7 @@ jint JNI_OnLoad(JavaVM* vm, __attribute__((unused)) void* reserved) {
         hookExec(vmEnv);
         installLwjglDlopenHook(vmEnv);
         installEMUIIteratorMititgation(vmEnv);
+        install_sdl_hook();
     }
 
     if(pojav_environ->dalvikJavaVMPtr == vm) {
@@ -290,6 +294,49 @@ JNIEXPORT jboolean JNICALL Java_org_lwjgl_glfw_CallbackBridge_nativeNotifyLaunch
                                                           convertIntArrayJVM(env, dvm_env, action));
     return result;
 }
+
+// --- SDL support: intercept SDL_InitSubSystem so we can notify the launcher side ---
+// Minecraft 26.3+ uses SDL3 for windowing/input. When the game calls SDL_InitSubSystem inside
+// libSDL3.so, this bytehook fires and forwards a notification to the Dalvik CallbackBridge.
+// notifyLauncher, which loads libSDL3.so's JNI and binds the Android surface.
+typedef bool (*SDL_InitSubSystem_Func)(uint32_t);
+
+static bool custom_SDL_InitSubSystem_Func(uint32_t flags) {
+    JNIEnv *dvm_env = get_attached_env(pojav_environ->dalvikJavaVMPtr);
+    if (dvm_env != NULL && pojav_environ->bridgeClazz != NULL && pojav_environ->method_notifyLauncher != NULL) {
+        jint safeFlags = (flags > INT32_MAX) ? -1 : (jint) flags;
+        jint type = 0;                       // CallbackBridge.SDL
+        jint action[] = {0, safeFlags};      // {CallbackBridge.INIT, flags}
+        jintArray actionArray = (*dvm_env)->NewIntArray(dvm_env, 2);
+        (*dvm_env)->SetIntArrayRegion(dvm_env, actionArray, 0, 2, action);
+        (*dvm_env)->CallStaticBooleanMethod(dvm_env, pojav_environ->bridgeClazz,
+                                            pojav_environ->method_notifyLauncher, type, actionArray);
+        (*dvm_env)->DeleteLocalRef(dvm_env, actionArray);
+    } else {
+        LOGE("SDL_InitSubSystem notify to launcher-side integration failed!");
+    }
+
+    // Call the original SDL_InitSubSystem after doing the launcher-side setup.
+    bool r = BYTEHOOK_CALL_PREV(custom_SDL_InitSubSystem_Func, SDL_InitSubSystem_Func, flags);
+    BYTEHOOK_POP_STACK();
+    return r;
+}
+
+// Registers the SDL_InitSubSystem hook. bytehook_init is idempotent (also called from the
+// exit-trap in fcl_loader.c). hook_all + NULL caller covers libSDL3.so even though it loads later.
+static void install_sdl_hook() {
+    if (bytehook_init(BYTEHOOK_MODE_AUTOMATIC, false) == BYTEHOOK_STATUS_CODE_OK) {
+        bytehook_hook_all(NULL,
+                          "SDL_InitSubSystem",
+                          &custom_SDL_InitSubSystem_Func,
+                          NULL,
+                          NULL);
+        LOGI("Installed SDL_InitSubSystem hook");
+    } else {
+        LOGE("bytehook_init failed, SDL support may not work");
+    }
+}
+
 
 JNIEXPORT jboolean JNICALL JavaCritical_org_lwjgl_glfw_CallbackBridge_nativeSetInputReady(jboolean inputReady) {
 #ifdef DEBUG

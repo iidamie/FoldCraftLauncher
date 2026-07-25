@@ -172,6 +172,7 @@ target_link_libraries(
     PRIVATE
     fcl
     driver_helper
+    bytehook::bytehook
     log
     dl
     android
